@@ -1,0 +1,281 @@
+"""
+Project Service
+Business logic for project CRUD and API token management.
+"""
+
+import hashlib
+import secrets
+from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
+
+from bson import ObjectId
+
+from app.core.database import Database
+from app.core.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+PROJECTS_COLLECTION = "projects"
+API_TOKENS_COLLECTION = "api_tokens"
+
+
+class ProjectService:
+    """
+    Handles project and API token operations.
+    """
+
+    TOKEN_PREFIX = "lgs_"
+
+    # ------------------------------------------------------------------
+    # Projects
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def create_project(
+        name: str,
+        owner_id: str,
+        description: Optional[str] = None,
+        language: str = "python",
+    ) -> Dict[str, Any]:
+        """Create a new project for a user."""
+        collection = Database.get_collection(PROJECTS_COLLECTION)
+
+        doc = {
+            "name": name.strip(),
+            "description": (description or "").strip(),
+            "language": language,
+            "owner_id": owner_id,
+            "status": "active",
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }
+
+        result = await collection.insert_one(doc)
+        created = await collection.find_one({"_id": result.inserted_id})
+        logger.info("Project created: %s (owner=%s)", name, owner_id, extra={"project_id": str(result.inserted_id), "user_id": owner_id})
+        return created
+
+    @staticmethod
+    async def list_projects(owner_id: str) -> List[Dict[str, Any]]:
+        """List all projects owned by a user."""
+        collection = Database.get_collection(PROJECTS_COLLECTION)
+        tokens_col = Database.get_collection(API_TOKENS_COLLECTION)
+
+        cursor = collection.find({"owner_id": owner_id}).sort("created_at", -1)
+        projects = await cursor.to_list(length=100)
+
+        # Attach token counts
+        for proj in projects:
+            pid = str(proj["_id"])
+            count = await tokens_col.count_documents({"project_id": pid})
+            proj["token_count"] = count
+
+        return projects
+
+    @staticmethod
+    async def get_project(project_id: str, owner_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single project by ID, scoped to the owner."""
+        collection = Database.get_collection(PROJECTS_COLLECTION)
+        try:
+            project = await collection.find_one({
+                "_id": ObjectId(project_id),
+                "owner_id": owner_id,
+            })
+            if project:
+                tokens_col = Database.get_collection(API_TOKENS_COLLECTION)
+                project["token_count"] = await tokens_col.count_documents(
+                    {"project_id": str(project["_id"])}
+                )
+            return project
+        except Exception:
+            logger.warning("get_project failed: project_id=%s, owner=%s", project_id, owner_id)
+            return None
+
+    @staticmethod
+    async def update_project(
+        project_id: str,
+        owner_id: str,
+        update_data: dict,
+    ) -> Optional[Dict[str, Any]]:
+        """Update a project's fields."""
+        collection = Database.get_collection(PROJECTS_COLLECTION)
+        update_data["updated_at"] = datetime.utcnow()
+        # Remove None values
+        clean = {k: v for k, v in update_data.items() if v is not None}
+
+        try:
+            result = await collection.find_one_and_update(
+                {"_id": ObjectId(project_id), "owner_id": owner_id},
+                {"$set": clean},
+                return_document=True,
+            )
+            if result:
+                logger.info("Project updated: %s", project_id, extra={"project_id": project_id})
+            return result
+        except Exception:
+            logger.warning("update_project failed: project_id=%s", project_id)
+            return None
+
+    @staticmethod
+    async def delete_project(project_id: str, owner_id: str) -> bool:
+        """Delete a project and all its tokens."""
+        collection = Database.get_collection(PROJECTS_COLLECTION)
+        tokens_col = Database.get_collection(API_TOKENS_COLLECTION)
+
+        try:
+            result = await collection.delete_one({
+                "_id": ObjectId(project_id),
+                "owner_id": owner_id,
+            })
+            if result.deleted_count > 0:
+                # Cascade: remove all tokens for this project
+                await tokens_col.delete_many({"project_id": project_id})
+                logger.info("Project deleted (cascaded tokens): %s", project_id, extra={"project_id": project_id})
+                return True
+            return False
+        except Exception:
+            logger.warning("delete_project failed: project_id=%s", project_id)
+            return False
+
+    # ------------------------------------------------------------------
+    # API Tokens
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _generate_token(cls) -> str:
+        """Generate a random token with lgs_ prefix."""
+        random_part = secrets.token_urlsafe(32)  # ~43 chars
+        return f"{cls.TOKEN_PREFIX}{random_part}"
+
+    @staticmethod
+    def _hash_token(token: str) -> str:
+        """SHA-256 hash a token for storage."""
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    @classmethod
+    async def create_token(
+        cls,
+        project_id: str,
+        owner_id: str,
+        label: str = "Default",
+    ) -> Tuple[Dict[str, Any], str]:
+        """
+        Generate a new API token for a project.
+
+        Returns:
+            (token_document, plain_text_token)
+            The plain_text_token is returned ONLY at creation time.
+        """
+        # Verify project ownership
+        project = await cls.get_project(project_id, owner_id)
+        if not project:
+            raise ValueError("Project not found")
+
+        collection = Database.get_collection(API_TOKENS_COLLECTION)
+
+        # Enforce one-active-token-per-project
+        # $ne: False matches both is_active:True AND documents missing the field
+        active_token = await collection.find_one({
+            "project_id": project_id,
+            "is_active": {"$ne": False},
+        })
+        if active_token:
+            raise ValueError(
+                "An active token already exists for this project. "
+                "Disable the current token before generating a new one."
+            )
+
+        plain_token = cls._generate_token()
+        token_hash = cls._hash_token(plain_token)
+
+        prefix = plain_token[:8]   # "lgs_XXXX"
+        suffix = plain_token[-4:]  # last 4 chars
+
+        doc = {
+            "project_id": project_id,
+            "owner_id": owner_id,
+            "label": label.strip(),
+            "token_hash": token_hash,
+            "token_prefix": prefix,
+            "token_suffix": suffix,
+            "is_active": True,
+            "created_at": datetime.utcnow(),
+            "last_used_at": None,
+        }
+
+        result = await collection.insert_one(doc)
+        created = await collection.find_one({"_id": result.inserted_id})
+
+        logger.info("API token created for project %s (label=%s)", project_id, label, extra={"project_id": project_id, "token_id": str(result.inserted_id)})
+        return created, plain_token
+
+    @staticmethod
+    async def list_tokens(project_id: str, owner_id: str) -> List[Dict[str, Any]]:
+        """List all tokens for a project (masked)."""
+        collection = Database.get_collection(API_TOKENS_COLLECTION)
+        cursor = collection.find({
+            "project_id": project_id,
+            "owner_id": owner_id,
+        }).sort("created_at", -1)
+        return await cursor.to_list(length=50)
+
+    @staticmethod
+    async def disable_token(token_id: str, owner_id: str) -> bool:
+        """Disable an active API token (sets is_active=False)."""
+        collection = Database.get_collection(API_TOKENS_COLLECTION)
+        try:
+            # Match tokens that are active OR pre-existing tokens that lack the field entirely
+            result = await collection.update_one(
+                {
+                    "_id": ObjectId(token_id),
+                    "owner_id": owner_id,
+                    "is_active": {"$ne": False},
+                },
+                {"$set": {"is_active": False}},
+            )
+            if result.modified_count > 0:
+                logger.info("Token disabled: %s", token_id, extra={"token_id": token_id})
+                return True
+            return False
+        except Exception:
+            logger.warning("disable_token failed: token_id=%s", token_id)
+            return False
+
+    @staticmethod
+    async def delete_token(token_id: str, owner_id: str) -> bool:
+        """Revoke/delete an API token."""
+        collection = Database.get_collection(API_TOKENS_COLLECTION)
+        try:
+            result = await collection.delete_one({
+                "_id": ObjectId(token_id),
+                "owner_id": owner_id,
+            })
+            if result.deleted_count > 0:
+                logger.info("Token revoked: %s", token_id, extra={"token_id": token_id})
+            return result.deleted_count > 0
+        except Exception:
+            logger.warning("delete_token failed: token_id=%s", token_id)
+            return False
+
+    @classmethod
+    async def validate_token(cls, plain_token: str) -> Optional[Dict[str, Any]]:
+        """
+        Validate a plain-text API token (used by log ingestion).
+        Returns the token doc if valid, None otherwise.
+        """
+        token_hash = cls._hash_token(plain_token)
+        collection = Database.get_collection(API_TOKENS_COLLECTION)
+
+        token_doc = await collection.find_one({"token_hash": token_hash, "is_active": {"$ne": False}})
+        if token_doc:
+            # Update last_used_at
+            await collection.update_one(
+                {"_id": token_doc["_id"]},
+                {"$set": {"last_used_at": datetime.utcnow()}},
+            )
+            logger.debug("Token validated for project %s", token_doc.get("project_id"))
+        return token_doc
+
+
+project_service = ProjectService()
