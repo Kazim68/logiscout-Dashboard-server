@@ -3,7 +3,6 @@ Project Service
 Business logic for project CRUD and API token management.
 """
 
-import hashlib
 import secrets
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
@@ -144,14 +143,15 @@ class ProjectService:
 
     @classmethod
     def _generate_token(cls) -> str:
-        """Generate a random token with lgs_ prefix."""
-        random_part = secrets.token_urlsafe(32)  # ~43 chars
+        """Generate a simple unique token in the format lgs_<random>."""
+        random_part = secrets.token_urlsafe(32)  # ~43 chars, URL-safe
         return f"{cls.TOKEN_PREFIX}{random_part}"
 
-    @staticmethod
-    def _hash_token(token: str) -> str:
-        """SHA-256 hash a token for storage."""
-        return hashlib.sha256(token.encode()).hexdigest()
+    @classmethod
+    async def _ensure_token_index(cls) -> None:
+        """Create a unique index on the `token` field for O(1) lookups."""
+        collection = Database.get_collection(API_TOKENS_COLLECTION)
+        await collection.create_index("token", unique=True)
 
     @classmethod
     async def create_token(
@@ -175,7 +175,6 @@ class ProjectService:
         collection = Database.get_collection(API_TOKENS_COLLECTION)
 
         # Enforce one-active-token-per-project
-        # $ne: False matches both is_active:True AND documents missing the field
         active_token = await collection.find_one({
             "project_id": project_id,
             "is_active": {"$ne": False},
@@ -186,17 +185,20 @@ class ProjectService:
                 "Disable the current token before generating a new one."
             )
 
-        plain_token = cls._generate_token()
-        token_hash = cls._hash_token(plain_token)
+        # Ensure unique index exists on the `token` field
+        await cls._ensure_token_index()
 
-        prefix = plain_token[:8]   # "lgs_XXXX"
+        plain_token = cls._generate_token()
+
+        # Prefix for masked display, suffix for identification
+        prefix = plain_token[:8]   # "lgs_Ab3x"
         suffix = plain_token[-4:]  # last 4 chars
 
         doc = {
             "project_id": project_id,
             "owner_id": owner_id,
             "label": label.strip(),
-            "token_hash": token_hash,
+            "token": plain_token,
             "token_prefix": prefix,
             "token_suffix": suffix,
             "is_active": True,
@@ -262,19 +264,33 @@ class ProjectService:
     async def validate_token(cls, plain_token: str) -> Optional[Dict[str, Any]]:
         """
         Validate a plain-text API token (used by log ingestion).
-        Returns the token doc if valid, None otherwise.
+
+        Performs a single indexed lookup on the `token` field.
+        No hashing or parsing required — O(1) with the unique index.
+
+        Returns the token doc (including project_id) if valid and active,
+        None otherwise.
         """
-        token_hash = cls._hash_token(plain_token)
+        if not plain_token or not plain_token.startswith(cls.TOKEN_PREFIX):
+            logger.warning("validate_token: malformed token (bad prefix)")
+            return None
+
         collection = Database.get_collection(API_TOKENS_COLLECTION)
 
-        token_doc = await collection.find_one({"token_hash": token_hash, "is_active": {"$ne": False}})
+        # Single indexed query — no hashing, no parsing
+        token_doc = await collection.find_one({
+            "token": plain_token,
+            "is_active": {"$ne": False},
+        })
+
         if token_doc:
-            # Update last_used_at
+            # Update last_used_at (fire-and-forget is fine for analytics)
             await collection.update_one(
                 {"_id": token_doc["_id"]},
                 {"$set": {"last_used_at": datetime.utcnow()}},
             )
             logger.debug("Token validated for project %s", token_doc.get("project_id"))
+
         return token_doc
 
 

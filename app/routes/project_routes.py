@@ -166,7 +166,7 @@ async def create_token(
         "project_id": token_doc["project_id"],
         "label": token_doc["label"],
         "token": plain_token,
-        "token_masked": f"{token_doc['token_prefix']}...{token_doc['token_suffix']}",
+        "token_masked": f"{token_doc.get('token_prefix', '')}...{token_doc.get('token_suffix', '')}",
         "is_active": token_doc.get("is_active", True),
         "created_at": token_doc["created_at"].isoformat(),
     }
