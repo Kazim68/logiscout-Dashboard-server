@@ -22,7 +22,7 @@ from app.dependencies.auth_dependency import get_current_user
 from app.core.config import settings
 from app.core.security import decode_access_token
 from app.core.logging_config import get_logger
-from app.core.database import Database, USERS_COLLECTION
+from app.core import database as db
 from app.models.user_model import user_helper
 
 logger = get_logger(__name__)
@@ -224,7 +224,6 @@ async def complete_onboarding(
     from bson import ObjectId
 
     user_id = current_user["id"]
-    collection = Database.get_collection(USERS_COLLECTION)
 
     update_fields = {
         "onboarding_completed": True,
@@ -242,7 +241,7 @@ async def complete_onboarding(
     if request.notification_preferences:
         update_fields["notification_preferences"] = request.notification_preferences
 
-    await collection.update_one(
+    await db.Users.update_one(
         {"_id": ObjectId(user_id)},
         {"$set": update_fields},
     )
@@ -278,7 +277,7 @@ async def complete_onboarding(
         logger.info("Onboarding project created for user %s: %s", user_id, project_id)
 
     # Return refreshed user data
-    updated_user = await collection.find_one({"_id": ObjectId(user_id)})
+    updated_user = await db.Users.find_one({"_id": ObjectId(user_id)})
     user_data = user_helper(updated_user)
 
     logger.info("Onboarding completed for user %s", user_id)

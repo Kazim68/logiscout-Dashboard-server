@@ -3,7 +3,7 @@ Project Model
 Defines the Project and API Token document structures for MongoDB.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -90,8 +90,8 @@ def project_helper(project: dict) -> dict:
         "language": project.get("language", "python"),
         "owner_id": project.get("owner_id", ""),
         "status": project.get("status", "active"),
-        "created_at": project.get("created_at", datetime.utcnow()).isoformat(),
-        "updated_at": project.get("updated_at", datetime.utcnow()).isoformat(),
+        "created_at": project.get("created_at", datetime.now(timezone.utc)).isoformat(),
+        "updated_at": project.get("updated_at", datetime.now(timezone.utc)).isoformat(),
     }
 
 
@@ -106,7 +106,7 @@ def token_helper(token: dict) -> dict:
         "label": token.get("label", ""),
         "token_masked": f"{token.get('token_prefix', '')}...{token.get('token_suffix', '')}",
         "is_active": token.get("is_active", True),
-        "created_at": token.get("created_at", datetime.utcnow()).isoformat(),
+        "created_at": token.get("created_at", datetime.now(timezone.utc)).isoformat(),
         "last_used_at": (
             token["last_used_at"].isoformat() if token.get("last_used_at") else None
         ),

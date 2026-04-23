@@ -3,10 +3,10 @@ Authentication Service
 Handles user registration, login, and authentication logic.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 
-from app.core.database import Database, USERS_COLLECTION
+from app.core import database as db
 from app.core.security import (
     hash_password,
     verify_password,
@@ -37,8 +37,7 @@ class AuthService:
         Returns:
             User document if found, None otherwise
         """
-        collection = Database.get_collection(USERS_COLLECTION)
-        user = await collection.find_one({"email": email.lower()})
+        user = await db.Users.find_one({"email": email.lower()})
         if user:
             logger.debug("Found user by email: %s", email.lower())
         return user
@@ -56,9 +55,8 @@ class AuthService:
         """
         from bson import ObjectId
         
-        collection = Database.get_collection(USERS_COLLECTION)
         try:
-            user = await collection.find_one({"_id": ObjectId(user_id)})
+            user = await db.Users.find_one({"_id": ObjectId(user_id)})
             return user
         except Exception:
             logger.warning("Invalid user_id format: %s", user_id)
@@ -85,8 +83,6 @@ class AuthService:
         Returns:
             Created user document
         """
-        collection = Database.get_collection(USERS_COLLECTION)
-        
         # Prepare user document
         user_doc = {
             "name": name,
@@ -94,14 +90,14 @@ class AuthService:
             "password": hash_password(password) if password else None,
             "provider": provider,
             "provider_id": provider_id,
-            "created_at": datetime.utcnow()
+            "created_at": datetime.now(timezone.utc)
         }
-        
+
         # Insert user
-        result = await collection.insert_one(user_doc)
-        
+        result = await db.Users.insert_one(user_doc)
+
         # Retrieve and return created user
-        created_user = await collection.find_one({"_id": result.inserted_id})
+        created_user = await db.Users.find_one({"_id": result.inserted_id})
         logger.info("User created: %s (provider=%s)", email.lower(), provider, extra={"email": email.lower()})
         return created_user
     

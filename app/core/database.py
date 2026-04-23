@@ -90,11 +90,38 @@ class Database:
 # Collection name constants
 USERS_COLLECTION = "users"
 PENDING_SIGNUPS_COLLECTION = "pending_signups"
+PROJECTS_COLLECTION = "projects"
+API_TOKENS_COLLECTION = "api_tokens"
 
 
-async def get_users_collection():
+# ---------------------------------------------------------------------------
+# Pre-resolved collection references (initialized once via init_collections)
+# Import these directly in services instead of calling
+# Database.get_collection() on every request.
+#
+# Usage (like Express/Mongoose):
+#   from app.core.database import Users, Projects, APITokens
+#   await Users.find_one({"email": email})
+# ---------------------------------------------------------------------------
+Users = None
+PendingSignups = None
+Projects = None
+APITokens = None
+
+
+def init_collections() -> None:
     """
-    Get the users collection.
-    Convenience function for dependency injection.
+    Resolve collection references from the connected database.
+    Must be called once AFTER Database.connect().
     """
-    return Database.get_collection(USERS_COLLECTION)
+    global Users, PendingSignups, Projects, APITokens
+
+    db = Database.get_database()
+    Users = db[USERS_COLLECTION]
+    PendingSignups = db[PENDING_SIGNUPS_COLLECTION]
+    Projects = db[PROJECTS_COLLECTION]
+    APITokens = db[API_TOKENS_COLLECTION]
+
+    logger.info("Collection references initialized: %s",
+                [USERS_COLLECTION, PENDING_SIGNUPS_COLLECTION,
+                 PROJECTS_COLLECTION, API_TOKENS_COLLECTION])

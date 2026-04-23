@@ -3,7 +3,7 @@ User Model
 Defines the User document structure for MongoDB.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel, Field, EmailStr
 from bson import ObjectId
@@ -121,5 +121,5 @@ def user_helper(user: dict) -> dict:
         "industry": user.get("industry"),
         "notification_preferences": user.get("notification_preferences", []),
         "onboarding_completed": user.get("onboarding_completed", False),
-        "created_at": user.get("created_at", datetime.utcnow()).isoformat()
+        "created_at": user.get("created_at", datetime.now(timezone.utc)).isoformat()
     }

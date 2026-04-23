@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
 from app.core.config import settings
-from app.core.database import Database
+from app.core.database import Database, init_collections
 from app.core.logging_config import setup_logging, get_logger
 from app.routes import (
     auth_router,
@@ -35,7 +35,8 @@ async def lifespan(app: FastAPI):
     setup_logging()
     logger.info("Starting %s v%s", settings.APP_NAME, settings.APP_VERSION)
     await Database.connect()
-    
+    init_collections()
+
     yield
     
     # Shutdown: Disconnect from database
