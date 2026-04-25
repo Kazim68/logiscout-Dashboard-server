@@ -32,6 +32,7 @@ class ProjectUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     status: Optional[str] = Field(None, pattern="^(active|inactive)$")
+    webhook_base_url: Optional[str] = Field(None, max_length=500)
 
 
 class ProjectResponse(BaseModel):
@@ -45,6 +46,7 @@ class ProjectResponse(BaseModel):
     created_at: str
     updated_at: str
     token_count: Optional[int] = 0
+    webhook_base_url: Optional[str] = None
 
 
 class ProjectListResponse(BaseModel):

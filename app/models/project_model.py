@@ -28,6 +28,7 @@ class ProjectModel(BaseModel):
     language: str = "python"  # "python" or "nodejs"
     owner_id: str  # References users._id
     status: str = "active"
+    webhook_base_url: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -92,6 +93,7 @@ def project_helper(project: dict) -> dict:
         "status": project.get("status", "active"),
         "created_at": project.get("created_at", datetime.now(timezone.utc)).isoformat(),
         "updated_at": project.get("updated_at", datetime.now(timezone.utc)).isoformat(),
+        "webhook_base_url": project.get("webhook_base_url", None),
     }
 
 
