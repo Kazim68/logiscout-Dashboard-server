@@ -136,6 +136,7 @@ class ProjectService:
 
     @classmethod
     async def _ensure_token_index(cls) -> None:
+<<<<<<< Updated upstream
         """
         Ensure a unique index for non-null token values.
 
@@ -182,6 +183,35 @@ class ProjectService:
         )
         cls._token_index_ready = True
         logger.info("Ensured token index: %s", cls.TOKEN_INDEX_NAME)
+=======
+        """Create a unique index on the `token` field for O(1) lookups.
+
+        Uses a partial filter so legacy documents missing the `token` field
+        (e.g. older `token_hash`-only rows) don't collide as `{token: null}`.
+        If a stale full-unique `token_1` index exists from a prior schema,
+        drop and recreate it with the partial filter.
+        """
+        desired_partial = {"token": {"$type": "string"}}
+        try:
+            existing = await db.APITokens.index_information()
+        except Exception:
+            existing = {}
+
+        token_idx = existing.get("token_1")
+        if token_idx is not None:
+            if token_idx.get("partialFilterExpression") == desired_partial and token_idx.get("unique"):
+                return
+            try:
+                await db.APITokens.drop_index("token_1")
+            except Exception:
+                logger.warning("Failed to drop stale token_1 index", exc_info=True)
+
+        await db.APITokens.create_index(
+            "token",
+            unique=True,
+            partialFilterExpression=desired_partial,
+        )
+>>>>>>> Stashed changes
 
     @classmethod
     async def create_token(
