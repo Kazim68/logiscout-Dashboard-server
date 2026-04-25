@@ -29,7 +29,11 @@ class OTPService:
     @staticmethod
     async def _ensure_ttl_index():
         """Create a TTL index on `expires_at` so expired docs auto-delete."""
-        await db.PendingSignups.create_index("expires_at", expireAfterSeconds=0)
+        try:
+            await db.PendingSignups.create_index("expires_at", expireAfterSeconds=0)
+        except Exception:
+            await db.PendingSignups.drop_index("expires_at_1")
+            await db.PendingSignups.create_index("expires_at", expireAfterSeconds=0)
 
     # ------------------------------------------------------------------
     # Public API

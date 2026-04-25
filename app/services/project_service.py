@@ -21,6 +21,8 @@ class ProjectService:
     """
 
     TOKEN_PREFIX = "lgs_"
+    TOKEN_INDEX_NAME = "token_unique_non_null"
+    _token_index_ready = False
 
     # ------------------------------------------------------------------
     # Projects
@@ -134,8 +136,52 @@ class ProjectService:
 
     @classmethod
     async def _ensure_token_index(cls) -> None:
-        """Create a unique index on the `token` field for O(1) lookups."""
-        await db.APITokens.create_index("token", unique=True)
+        """
+        Ensure a unique index for non-null token values.
+
+        Legacy collections may contain old documents with token=None.
+        A plain unique index on `token` fails in that case with duplicate
+        key `{ token: null }`. To keep backwards compatibility, we enforce
+        uniqueness only for string token values.
+        """
+        if cls._token_index_ready:
+            return
+
+        desired_key = {"token": 1}
+        desired_partial = {"token": {"$type": "string"}}
+
+        # Inspect existing indexes and migrate incompatible token indexes.
+        indexes = await db.APITokens.list_indexes().to_list(length=None)
+        for idx in indexes:
+            key = dict(idx.get("key", {}))
+            if key != desired_key:
+                continue
+
+            is_desired = (
+                idx.get("name") == cls.TOKEN_INDEX_NAME
+                and idx.get("unique") is True
+                and idx.get("partialFilterExpression") == desired_partial
+            )
+            if is_desired:
+                cls._token_index_ready = True
+                return
+
+            # Drop old/conflicting index definitions (e.g. token_1)
+            # before creating the desired migration-safe index.
+            try:
+                await db.APITokens.drop_index(idx["name"])
+                logger.info("Dropped legacy token index: %s", idx["name"])
+            except Exception as exc:
+                logger.warning("Failed dropping index %s: %s", idx.get("name"), exc)
+
+        await db.APITokens.create_index(
+            [("token", 1)],
+            name=cls.TOKEN_INDEX_NAME,
+            unique=True,
+            partialFilterExpression=desired_partial,
+        )
+        cls._token_index_ready = True
+        logger.info("Ensured token index: %s", cls.TOKEN_INDEX_NAME)
 
     @classmethod
     async def create_token(
