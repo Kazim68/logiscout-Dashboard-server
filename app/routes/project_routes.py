@@ -16,6 +16,7 @@ from app.services.project_service import project_service
 from app.models.project_model import project_helper, token_helper
 from app.utils.response_handler import create_response
 from app.core.logging_config import get_logger
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -79,6 +80,29 @@ async def get_project(
     data = project_helper(project)
     data["token_count"] = project.get("token_count", 0)
     return create_response(success=True, message="Project retrieved", data=data)
+
+
+@router.get(
+    "/{project_id}/webhook-url",
+    summary="Get the GitHub webhook URL for a project",
+)
+async def get_webhook_url(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    project = await project_service.get_project(project_id, current_user["id"])
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=create_response(success=False, message="Project not found"),
+        )
+    base = settings.INGESTION_SERVER_URL.rstrip("/")
+    webhook_url = f"{base}/api/v1/webhook/{project_id}/github"
+    return create_response(
+        success=True,
+        message="Webhook URL generated",
+        data={"webhook_url": webhook_url},
+    )
 
 
 @router.patch(
