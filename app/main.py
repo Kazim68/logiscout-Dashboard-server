@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
-from app.core.config import settings
+from app.core.config import settings, get_allowed_origins
 from app.core.database import Database, init_collections
 from app.core.logging_config import setup_logging, get_logger
 from app.routes import (
@@ -19,6 +19,7 @@ from app.routes import (
     github_oauth_router,
     dashboard_router,
     project_router,
+    live_log_router,
 )
 from app.utils.response_handler import create_error_response
 
@@ -76,11 +77,7 @@ app = FastAPI(
 # Configure CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.FRONTEND_URL,
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ],
+    allow_origins=get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -185,6 +182,9 @@ app.include_router(dashboard_router)
 
 # Project & Token Management routes (protected)
 app.include_router(project_router)
+
+# Live Logs routes (no /api prefix — frontend connects directly to /live-logs)
+app.include_router(live_log_router)
 
 
 # ============================================

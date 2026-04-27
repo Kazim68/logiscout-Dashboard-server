@@ -13,6 +13,10 @@ from app.schemas.user_schema import (
     OAuthRedirectResponse,
     OAuthCallbackRequest
 )
+from app.schemas.live_log_schema import (
+    LiveLogEntrySchema,
+    LiveLogIngestItem,
+)
 
 __all__ = [
     "UserSignUpRequest",
@@ -22,5 +26,7 @@ __all__ = [
     "DashboardStats",
     "DashboardResponse",
     "OAuthRedirectResponse",
-    "OAuthCallbackRequest"
+    "OAuthCallbackRequest",
+    "LiveLogEntrySchema",
+    "LiveLogIngestItem",
 ]

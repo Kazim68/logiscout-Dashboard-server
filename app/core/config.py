@@ -5,7 +5,7 @@ Loads environment variables and provides configuration settings.
 
 from pydantic_settings import BaseSettings
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, List
 
 
 class Settings(BaseSettings):
@@ -39,7 +39,8 @@ class Settings(BaseSettings):
     GITHUB_REDIRECT_URI: str
     
     # CORS Configuration
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: str = "http://localhost:4001"
+    FRONTEND_URLS: str = "http://localhost:4001,http://127.0.0.1:4001"
 
     # Ingestion Server
     INGESTION_SERVER_BASE_URL: str = "http://localhost:8001"
@@ -72,3 +73,11 @@ def get_settings() -> Settings:
 
 # Export settings instance for convenience
 settings = get_settings()
+
+
+def get_allowed_origins() -> List[str]:
+    """Return normalized frontend origins for CORS middleware."""
+    origins = [origin.strip() for origin in settings.FRONTEND_URLS.split(",") if origin.strip()]
+    if settings.FRONTEND_URL and settings.FRONTEND_URL not in origins:
+        origins.append(settings.FRONTEND_URL)
+    return origins

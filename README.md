@@ -215,7 +215,7 @@ Token payload:
 
 1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
 2. Create a new OAuth App
-3. Set Homepage URL: `http://localhost:3000`
+3. Set Homepage URL: `http://localhost:4001`
 4. Set Authorization callback URL: `http://localhost:8000/api/auth/github/callback`
 5. Copy Client ID and Client Secret to `.env`
 
