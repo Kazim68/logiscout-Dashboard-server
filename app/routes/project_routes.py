@@ -83,8 +83,8 @@ async def get_project(
 
 
 @router.get(
-    "/{project_id}/webhook-url",
-    summary="Get the GitHub webhook URL for a project",
+    "/{project_id}/github/webhook-url",
+    summary="Generate the GitHub webhook URL for a project",
 )
 async def get_webhook_url(
     project_id: str,
@@ -96,12 +96,12 @@ async def get_webhook_url(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=create_response(success=False, message="Project not found"),
         )
-    base = settings.INGESTION_SERVER_URL.rstrip("/")
-    webhook_url = f"{base}/api/v1/webhook/{project_id}/github"
+    base = settings.INGESTION_SERVER_BASE_URL.rstrip("/")
+    webhook_url = f"https://marin-nonadjudicated-ernestina.ngrok-free.dev/api/v1/webhook/{project_id}/github/"
     return create_response(
         success=True,
         message="Webhook URL generated",
-        data={"webhook_url": webhook_url},
+        data={"webhookUrl": webhook_url},
     )
 
 

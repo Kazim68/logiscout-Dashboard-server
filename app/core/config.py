@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
 
     # Ingestion Server
-    INGESTION_SERVER_URL: str = "http://localhost:8001"
+    INGESTION_SERVER_BASE_URL: str = "http://localhost:8001"
     
     # SMTP / Email Configuration (optional — OTP is logged to console if not set)
     SMTP_HOST: str = ""
