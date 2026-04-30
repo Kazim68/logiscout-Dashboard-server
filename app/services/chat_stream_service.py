@@ -37,13 +37,13 @@ class ChatStreamService:
         ]
 
     @staticmethod
-    def get_vauge_context(request: ChatStreamRequest) -> str:
+    def get_vauge_context() -> str:
         """
         Return the vague context exactly as supplied by the client.
 
         The spelling is kept to match the existing API contract.
         """
-        return request.vague_context.strip()
+        return 
 
     @staticmethod
     def _build_rag_request_payload(llm_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,7 +100,7 @@ class ChatStreamService:
             project_id=request.project_id,
             owner_id=current_user["id"],
             user_prompt=request.user_prompt,
-            vague_context=self.get_vauge_context(request),
+            vague_context=self.get_vauge_context(),
             chat_id=request.chat_id,
         )
         if not staged_chat:
@@ -120,7 +120,7 @@ class ChatStreamService:
 
         # This payload is what will be sent to the LLM API.
         llm_payload = {
-            "vague_context": self.get_vauge_context(request),
+            "vague_context": self.get_vauge_context(),
             "chat_context": chat_context,
             "projectId": request.project_id,
             "user_prompt": request.user_prompt,
