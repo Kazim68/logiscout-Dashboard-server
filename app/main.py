@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from app.core.config import settings, get_allowed_origins
 from app.core.database import Database, init_collections
 from app.core.logging_config import setup_logging, get_logger
+from app.services.chat_service import chat_service
 from app.routes import (
     auth_router,
     google_oauth_router,
@@ -20,6 +21,7 @@ from app.routes import (
     dashboard_router,
     project_router,
     live_log_router,
+    chat_router,
 )
 from app.utils.response_handler import create_error_response
 
@@ -37,6 +39,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.APP_NAME, settings.APP_VERSION)
     await Database.connect()
     init_collections()
+    await chat_service.ensure_indexes()
 
     yield
     
@@ -185,6 +188,7 @@ app.include_router(project_router)
 
 # Live Logs routes (no /api prefix — frontend connects directly to /live-logs)
 app.include_router(live_log_router)
+app.include_router(chat_router)
 
 
 # ============================================
@@ -240,7 +244,9 @@ async def api_info():
                 },
                 "protected": {
                     "dashboard": "GET /api/dashboard",
-                    "profile": "GET /api/profile"
+                    "profile": "GET /api/profile",
+                    "project_chats": "GET /chat/{project_id}",
+                    "project_chat_detail": "GET /chat/{project_id}/{chat_id}"
                 },
                 "utility": {
                     "health": "GET /api/health"
@@ -261,6 +267,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=9000,
+        port=8000,
         reload=True
     )

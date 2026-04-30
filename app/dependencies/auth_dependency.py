@@ -133,6 +133,8 @@ async def get_current_user_optional(
         return None
 
 
+
+
 def require_provider(allowed_providers: list):
     """
     Dependency factory to require specific authentication providers.

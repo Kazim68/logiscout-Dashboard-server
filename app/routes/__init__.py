@@ -9,6 +9,7 @@ from app.routes.github_oauth_routes import router as github_oauth_router
 from app.routes.dashboard_routes import router as dashboard_router
 from app.routes.project_routes import router as project_router
 from app.routes.live_log_routes import router as live_log_router
+from app.routes.chat_routes import router as chat_router
 
 __all__ = [
     "auth_router",
@@ -17,4 +18,5 @@ __all__ = [
     "dashboard_router",
     "project_router",
     "live_log_router",
+    "chat_router",
 ]

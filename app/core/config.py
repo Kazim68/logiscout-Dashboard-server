@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    CHAT_ENCRYPTION_KEY: str = ""
     
     # Google OAuth Configuration
     GOOGLE_CLIENT_ID: str
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
 
     # Ingestion Server
     INGESTION_SERVER_BASE_URL: str = "http://localhost:8001"
+    RAG_SERVER_BASE_URL: str = "http://localhost:9000"
     
     # SMTP / Email Configuration (optional — OTP is logged to console if not set)
     SMTP_HOST: str = ""

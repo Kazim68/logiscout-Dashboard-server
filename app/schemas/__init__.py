@@ -17,6 +17,13 @@ from app.schemas.live_log_schema import (
     LiveLogEntrySchema,
     LiveLogIngestItem,
 )
+from app.schemas.chat_schema import (
+    ChatStreamRequest,
+    ChatContextMessageResponse,
+    ChatSummaryResponse,
+    ProjectChatListData,
+    ChatContextResponse,
+)
 
 __all__ = [
     "UserSignUpRequest",
@@ -29,4 +36,9 @@ __all__ = [
     "OAuthCallbackRequest",
     "LiveLogEntrySchema",
     "LiveLogIngestItem",
+    "ChatStreamRequest",
+    "ChatContextMessageResponse",
+    "ChatSummaryResponse",
+    "ProjectChatListData",
+    "ChatContextResponse",
 ]
