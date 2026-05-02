@@ -315,6 +315,49 @@ class ChatService:
             logger.warning("replace_chat_messages failed: chat_id=%s", chat_id)
             return None
 
+    async def update_chat_summary(
+        self,
+        project_id: str,
+        chat_id: str,
+        owner_id: str,
+        summary: str,
+        summarized_message_count: int,
+    ) -> bool:
+        """
+        Persist a refreshed chat summary and the message count it covered.
+
+        Deliberately does NOT touch encrypted_payload or updated_at — summary
+        refreshes shouldn't bump the chat's "last activity" timestamp.
+        """
+        try:
+            result = await db.Chats.update_one(
+                {
+                    "_id": ObjectId(chat_id),
+                    "project_id": project_id,
+                    "owner_id": owner_id,
+                },
+                {
+                    "$set": {
+                        "chat_summary": summary,
+                        "last_summarized_at": datetime.now(timezone.utc),
+                        "last_summarized_message_count": summarized_message_count,
+                    }
+                },
+            )
+            if result.matched_count == 0:
+                logger.warning(
+                    "update_chat_summary matched 0 docs (chat=%s, project=%s)",
+                    chat_id,
+                    project_id,
+                )
+                return False
+            return True
+        except Exception:
+            logger.exception(
+                "update_chat_summary failed (chat=%s)", chat_id,
+            )
+            return False
+
     async def list_project_chats(
         self,
         project_id: str,
@@ -328,6 +371,9 @@ class ChatService:
                 "project_id": 1,
                 "title": 1,
                 "message_count": 1,
+                "chat_summary": 1,
+                "last_summarized_at": 1,
+                "last_summarized_message_count": 1,
                 "created_at": 1,
                 "updated_at": 1,
             },

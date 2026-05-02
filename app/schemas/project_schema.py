@@ -47,6 +47,7 @@ class ProjectResponse(BaseModel):
     updated_at: str
     token_count: Optional[int] = 0
     webhook_base_url: Optional[str] = None
+    vague_context: Optional[str] = None
 
 
 class ProjectListResponse(BaseModel):

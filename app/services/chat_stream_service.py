@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -27,6 +28,10 @@ class ChatStreamService:
     CHUNK_DELAY_SECONDS = 0.06
     CHUNK_WORDS = 3
     RAG_RESPONSE_PATH = "/api/v1/response"
+    RAG_VAGUE_CONTEXT_PATH = "/api/v1/vague_context/summarize"
+    RAG_CHAT_SUMMARY_PATH = "/api/v1/chat_summary"
+    SUMMARY_REFRESH_INTERVAL = 10
+    VAGUE_CONTEXT_RECENT_PAIRS = 4  # ~8 messages
 
     @staticmethod
     def _chunk_text(text: str, words_per_chunk: int) -> List[str]:
@@ -35,15 +40,6 @@ class ChatStreamService:
             " ".join(words[index:index + words_per_chunk])
             for index in range(0, len(words), words_per_chunk)
         ]
-
-    @staticmethod
-    def get_vauge_context() -> str:
-        """
-        Return the vague context exactly as supplied by the client.
-
-        The spelling is kept to match the existing API contract.
-        """
-        return 
 
     @staticmethod
     def _build_rag_request_payload(llm_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -96,11 +92,13 @@ class ChatStreamService:
             }
             return
 
+        vague_context = project.get("vague_context") or ""
+
         staged_chat = await chat_service.stage_user_prompt(
             project_id=request.project_id,
             owner_id=current_user["id"],
             user_prompt=request.user_prompt,
-            vague_context=self.get_vauge_context(),
+            vague_context=vague_context,
             chat_id=request.chat_id,
         )
         if not staged_chat:
@@ -120,7 +118,7 @@ class ChatStreamService:
 
         # This payload is what will be sent to the LLM API.
         llm_payload = {
-            "vague_context": self.get_vauge_context(),
+            "vague_context": vague_context,
             "chat_context": chat_context,
             "projectId": request.project_id,
             "user_prompt": request.user_prompt,
@@ -220,6 +218,12 @@ class ChatStreamService:
             simulated=False,
         )
 
+        self._maybe_schedule_chat_summary(
+            project_id=request.project_id,
+            owner_id=current_user["id"],
+            updated_chat=updated_chat,
+        )
+
         yield {
             "type": "assistant_done",
             "projectId": request.project_id,
@@ -230,6 +234,291 @@ class ChatStreamService:
             "sources": rag_metadata.get("sources") or [],
             "warning": rag_metadata.get("warning"),
         }
+
+    def _maybe_schedule_chat_summary(
+        self,
+        project_id: str,
+        owner_id: str,
+        updated_chat: Optional[Dict[str, Any]],
+    ) -> None:
+        """
+        Fire-and-forget: schedule a chat summary refresh if the chat has
+        accumulated SUMMARY_REFRESH_INTERVAL new messages since the last summary.
+
+        Never raises — a scheduling hiccup must not break the stream that just
+        finished.
+        """
+        if not updated_chat:
+            logger.warning(
+                "summary scheduling skipped: missing updated_chat (project=%s)",
+                project_id,
+            )
+            return
+
+        try:
+            chat_id = str(updated_chat["_id"])
+            message_count = int(updated_chat.get("message_count") or 0)
+            last_summarized = int(updated_chat.get("last_summarized_message_count") or 0)
+            delta = message_count - last_summarized
+
+            if delta < self.SUMMARY_REFRESH_INTERVAL:
+                logger.debug(
+                    "summary scheduling skipped: below threshold (chat=%s, delta=%d)",
+                    chat_id,
+                    delta,
+                )
+                return
+
+            logger.info(
+                "summary scheduling: threshold reached (chat=%s, count=%d, last_summarized=%d, delta=%d)",
+                chat_id,
+                message_count,
+                last_summarized,
+                delta,
+            )
+            asyncio.create_task(
+                self.refresh_chat_summary(
+                    project_id=project_id,
+                    owner_id=owner_id,
+                    chat_id=chat_id,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "summary scheduling failed (project=%s)",
+                project_id,
+            )
+
+    async def refresh_chat_summary(
+        self,
+        project_id: str,
+        owner_id: str,
+        chat_id: str,
+    ) -> None:
+        """
+        Refresh and persist a single chat's rolling summary.
+
+        Sends only the message delta since the last summary to RAG, which
+        returns a new summary that incorporates the new turns. Safe to call
+        as a background task — never raises.
+        """
+        started = time.monotonic()
+        logger.info(
+            "chat_summary refresh task started (project=%s, chat=%s)",
+            project_id,
+            chat_id,
+        )
+        try:
+            chat = await chat_service.get_chat(project_id, chat_id, owner_id)
+            if not chat:
+                logger.warning(
+                    "chat_summary refresh skipped: chat missing (chat=%s)",
+                    chat_id,
+                )
+                return
+
+            all_messages = chat_service._serialize_context_messages(chat.get("messages", []))
+            if not all_messages:
+                logger.info(
+                    "chat_summary refresh skipped: no messages (chat=%s)",
+                    chat_id,
+                )
+                return
+
+            previous_summary = chat.get("chat_summary") or ""
+            previous_count = int(chat.get("last_summarized_message_count") or 0)
+            new_messages = all_messages[previous_count:]
+            if not new_messages:
+                logger.info(
+                    "chat_summary refresh skipped: no new messages (chat=%s, count=%d)",
+                    chat_id,
+                    previous_count,
+                )
+                return
+
+            url = f"{settings.RAG_SERVER_BASE_URL.rstrip('/')}{self.RAG_CHAT_SUMMARY_PATH}"
+            payload = {
+                "project_id": project_id,
+                "chat_id": chat_id,
+                "previous_summary": previous_summary,
+                "new_messages": new_messages,
+            }
+            logger.info(
+                "chat_summary RAG call (chat=%s, total=%d, delta=%d, prev_summary_len=%d)",
+                chat_id,
+                len(all_messages),
+                len(new_messages),
+                len(previous_summary),
+            )
+
+            timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=30.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, json=payload)
+                if response.status_code != 200:
+                    body = response.text[:500] if response.text else ""
+                    logger.warning(
+                        "chat_summary RAG returned %d (chat=%s, url=%s): %s",
+                        response.status_code,
+                        chat_id,
+                        url,
+                        body,
+                    )
+                    return
+                data = response.json()
+
+            new_summary = (data or {}).get("chat_summary")
+            if not isinstance(new_summary, str) or not new_summary.strip():
+                logger.warning(
+                    "chat_summary RAG response missing/empty 'chat_summary' (chat=%s, response_keys=%s)",
+                    chat_id,
+                    list((data or {}).keys()),
+                )
+                return
+
+            persisted = await chat_service.update_chat_summary(
+                project_id=project_id,
+                chat_id=chat_id,
+                owner_id=owner_id,
+                summary=new_summary,
+                summarized_message_count=len(all_messages),
+            )
+            if not persisted:
+                logger.warning(
+                    "chat_summary persist skipped/failed (chat=%s)",
+                    chat_id,
+                )
+                return
+
+            logger.info(
+                "chat_summary refreshed (chat=%s, count=%d, summary_len=%d, took=%.2fs)",
+                chat_id,
+                len(all_messages),
+                len(new_summary),
+                time.monotonic() - started,
+            )
+        except Exception:
+            logger.exception(
+                "chat_summary refresh failed (project=%s, chat=%s)",
+                project_id,
+                chat_id,
+            )
+
+    async def summarize_and_update_vague_context(
+        self,
+        project_id: str,
+        owner_id: str,
+        chat_id: str,
+    ) -> None:
+        """
+        Refresh and persist the project's vague_context after a chat closes.
+
+        Sends the chat's rolling summary plus its most recent messages to RAG.
+        Safe to call as a FastAPI background task — never raises.
+        """
+        started = time.monotonic()
+        logger.info(
+            "vague_context refresh task started (project=%s, chat=%s)",
+            project_id,
+            chat_id,
+        )
+        try:
+            chat = await chat_service.get_chat(project_id, chat_id, owner_id)
+            if not chat:
+                logger.warning(
+                    "vague_context skipped: chat missing (project=%s, chat=%s)",
+                    project_id,
+                    chat_id,
+                )
+                return
+
+            chat_summary = chat.get("chat_summary") or ""
+            recent_raw = chat_service._trim_recent_messages(
+                chat.get("messages", []),
+                max_pairs=self.VAGUE_CONTEXT_RECENT_PAIRS,
+            )
+            recent_messages = chat_service._serialize_context_messages(recent_raw)
+
+            if not chat_summary and not recent_messages:
+                logger.info(
+                    "vague_context skipped: nothing to summarize (chat=%s)",
+                    chat_id,
+                )
+                return
+
+            project = await project_service.get_project(project_id, owner_id)
+            if not project:
+                logger.warning(
+                    "vague_context skipped: project missing (project=%s)",
+                    project_id,
+                )
+                return
+            current_vague_context = project.get("vague_context") or ""
+
+            url = f"{settings.RAG_SERVER_BASE_URL.rstrip('/')}{self.RAG_VAGUE_CONTEXT_PATH}"
+            payload = {
+                "project_id": project_id,
+                "chat_summary": chat_summary,
+                "recent_messages": recent_messages,
+                "current_vague_context": current_vague_context,
+            }
+            logger.info(
+                "vague_context RAG call (project=%s, chat=%s, summary_len=%d, recent=%d, current_len=%d)",
+                project_id,
+                chat_id,
+                len(chat_summary),
+                len(recent_messages),
+                len(current_vague_context),
+            )
+
+            timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=30.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, json=payload)
+                if response.status_code != 200:
+                    body = response.text[:500] if response.text else ""
+                    logger.warning(
+                        "vague_context RAG returned %d (project=%s, url=%s): %s",
+                        response.status_code,
+                        project_id,
+                        url,
+                        body,
+                    )
+                    return
+                data = response.json()
+
+            new_vague_context = (data or {}).get("vague_context")
+            if not isinstance(new_vague_context, str):
+                logger.warning(
+                    "vague_context RAG response missing 'vague_context' string (project=%s, response_keys=%s)",
+                    project_id,
+                    list((data or {}).keys()),
+                )
+                return
+
+            persisted = await project_service.update_vague_context(
+                project_id=project_id,
+                owner_id=owner_id,
+                vague_context=new_vague_context,
+            )
+            if not persisted:
+                logger.warning(
+                    "vague_context persist returned False (project=%s)",
+                    project_id,
+                )
+                return
+
+            logger.info(
+                "vague_context updated (project=%s, chat=%s, new_len=%d, took=%.2fs)",
+                project_id,
+                chat_id,
+                len(new_vague_context),
+                time.monotonic() - started,
+            )
+        except Exception:
+            logger.exception(
+                "vague_context refresh failed (project=%s, chat=%s)",
+                project_id,
+                chat_id,
+            )
 
     async def iter_sse_chunks(
         self,

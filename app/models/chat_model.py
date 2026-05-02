@@ -37,6 +37,9 @@ class ChatModel(BaseModel):
     title: str
     encrypted_payload: str
     message_count: int = 0
+    chat_summary: Optional[str] = None
+    last_summarized_at: Optional[datetime] = None
+    last_summarized_message_count: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -56,11 +59,17 @@ class ChatModel(BaseModel):
 
 def chat_summary_helper(chat: dict) -> dict:
     """Format a chat summary document for API responses."""
+    last_summarized_at = chat.get("last_summarized_at")
     return {
         "id": str(chat["_id"]),
         "project_id": chat.get("project_id", ""),
         "title": chat.get("title", ""),
         "message_count": chat.get("message_count", 0),
+        "chat_summary": chat.get("chat_summary") or "",
+        "last_summarized_at": (
+            last_summarized_at.isoformat() if last_summarized_at else None
+        ),
+        "last_summarized_message_count": chat.get("last_summarized_message_count", 0),
         "created_at": chat.get("created_at", datetime.now(timezone.utc)).isoformat(),
         "updated_at": chat.get("updated_at", datetime.now(timezone.utc)).isoformat(),
     }
