@@ -44,8 +44,8 @@ class Settings(BaseSettings):
     FRONTEND_URLS: str = "http://localhost:4001,http://127.0.0.1:4001"
 
     # Ingestion Server
-    INGESTION_SERVER_BASE_URL: str = "http://localhost:8001"
-    RAG_SERVER_BASE_URL: str = "http://localhost:9000"
+    INGESTION_SERVER_BASE_URL: str
+    RAG_SERVER_BASE_URL: str
     
     # SMTP / Email Configuration (optional — OTP is logged to console if not set)
     SMTP_HOST: str = ""
