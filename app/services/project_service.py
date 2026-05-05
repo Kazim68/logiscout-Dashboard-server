@@ -107,6 +107,30 @@ class ProjectService:
             return None
 
     @staticmethod
+    async def update_vague_context(
+        project_id: str,
+        owner_id: str,
+        vague_context: str,
+    ) -> bool:
+        """Persist a refreshed vague_context summary on the project."""
+        try:
+            result = await db.Projects.update_one(
+                {"_id": ObjectId(project_id), "owner_id": owner_id},
+                {
+                    "$set": {
+                        "vague_context": vague_context,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            return result.modified_count > 0
+        except Exception:
+            logger.warning(
+                "update_vague_context failed: project_id=%s", project_id
+            )
+            return False
+
+    @staticmethod
     async def delete_project(project_id: str, owner_id: str) -> bool:
         """Delete a project and all its tokens."""
         try:
