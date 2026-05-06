@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # JWT Configuration
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120  # 2 hours
     CHAT_ENCRYPTION_KEY: str = ""
     
     # Google OAuth Configuration
@@ -40,8 +40,7 @@ class Settings(BaseSettings):
     GITHUB_REDIRECT_URI: str
     
     # CORS Configuration
-    FRONTEND_URL: str = "http://localhost:4001"
-    FRONTEND_URLS: str = "http://localhost:4001,http://127.0.0.1:4001"
+    FRONTEND_URL: str = "https://logiscout-frontend.vercel.app"
 
     # Ingestion Server
     INGESTION_SERVER_BASE_URL: str
@@ -82,7 +81,4 @@ settings = get_settings()
 
 def get_allowed_origins() -> List[str]:
     """Return normalized frontend origins for CORS middleware."""
-    origins = [origin.strip() for origin in settings.FRONTEND_URLS.split(",") if origin.strip()]
-    if settings.FRONTEND_URL and settings.FRONTEND_URL not in origins:
-        origins.append(settings.FRONTEND_URL)
-    return origins
+    return [settings.FRONTEND_URL] if settings.FRONTEND_URL else []
