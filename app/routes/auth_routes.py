@@ -14,6 +14,9 @@ from app.schemas.user_schema import (
     OTPVerifyRequest,
     OTPResendRequest,
     OnboardingRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    UpdatePasswordRequest,
 )
 from app.services.auth_service import auth_service
 from app.services.otp_service import otp_service
@@ -309,6 +312,58 @@ async def logout_user(response: Response):
         message="Logged out successfully",
         data=None
     )
+
+
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_200_OK,
+    summary="Request a password reset code",
+)
+async def forgot_password(request: ForgotPasswordRequest):
+    success, message = await auth_service.create_password_reset(request.email)
+    return create_response(success=True, message=message)
+
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_200_OK,
+    summary="Reset password with code",
+)
+async def reset_password(request: ResetPasswordRequest):
+    success, message, status_code = await auth_service.reset_password(
+        reset_token=request.resetToken,
+        new_password=request.newPassword,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status_code,
+            detail=create_response(success=False, message=message),
+        )
+    return create_response(success=True, message=message)
+
+
+@router.post(
+    "/update-password",
+    status_code=status.HTTP_200_OK,
+    summary="Update password (authenticated)",
+    description="Change the current user's password. Requires the current password for verification.",
+)
+async def update_password(
+    request: UpdatePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    success, message = await auth_service.update_password(
+        user_id=current_user["id"],
+        current_password=request.currentPassword,
+        new_password=request.newPassword,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=create_response(success=False, message=message),
+        )
+    logger.info("Password updated for user %s", current_user["id"])
+    return create_response(success=True, message=message)
 
 
 class SessionTokenRequest(BaseModel):

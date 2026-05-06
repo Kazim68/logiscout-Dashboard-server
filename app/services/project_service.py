@@ -53,50 +53,133 @@ class ProjectService:
 
     @staticmethod
     async def list_projects(owner_id: str) -> List[Dict[str, Any]]:
-        """List all projects owned by a user."""
+        """
+        List all projects the user owns OR collaborates on (active only).
+        Each project has a `role` field: "owner", "edit", or "read".
+        """
+        # Owned projects
         cursor = db.Projects.find({"owner_id": owner_id}).sort("created_at", -1)
-        projects = await cursor.to_list(length=100)
+        owned = await cursor.to_list(length=100)
+        for proj in owned:
+            proj["role"] = "owner"
+
+        # Active collaborator projects
+        collab_cursor = db.Collaborators.find({
+            "user_id": owner_id,
+            "status": "active",
+        })
+        collab_docs = await collab_cursor.to_list(length=200)
+
+        collab_projects: List[Dict[str, Any]] = []
+        seen_ids = {str(p["_id"]) for p in owned}
+        for c in collab_docs:
+            pid = c.get("project_id")
+            if not pid or pid in seen_ids:
+                continue
+            try:
+                p = await db.Projects.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                continue
+            if not p:
+                continue
+            p["role"] = c.get("role", "read")
+            collab_projects.append(p)
+            seen_ids.add(pid)
+
+        all_projects = owned + collab_projects
 
         # Attach token counts
-        for proj in projects:
+        for proj in all_projects:
             pid = str(proj["_id"])
             count = await db.APITokens.count_documents({"project_id": pid})
             proj["token_count"] = count
 
-        return projects
+        # Sort by created_at desc across the merged list
+        all_projects.sort(
+            key=lambda p: p.get("created_at", datetime.min.replace(tzinfo=timezone.utc)),
+            reverse=True,
+        )
+        return all_projects
 
     @staticmethod
-    async def get_project(project_id: str, owner_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single project by ID, scoped to the owner."""
+    async def get_project(project_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a project by ID. Accessible to the owner OR an active collaborator.
+        Adds a `role` field to the returned doc: "owner", "edit", or "read".
+        """
         try:
-            project = await db.Projects.find_one({
-                "_id": ObjectId(project_id),
-                "owner_id": owner_id,
-            })
-            if project:
-                project["token_count"] = await db.APITokens.count_documents(
-                    {"project_id": str(project["_id"])}
-                )
-            return project
+            project = await db.Projects.find_one({"_id": ObjectId(project_id)})
         except Exception:
-            logger.warning("get_project failed: project_id=%s, owner=%s", project_id, owner_id)
+            logger.warning("get_project failed: project_id=%s, user=%s", project_id, user_id)
             return None
+
+        if not project:
+            return None
+
+        if project.get("owner_id") == user_id:
+            project["role"] = "owner"
+        else:
+            collab = await db.Collaborators.find_one({
+                "project_id": str(project["_id"]),
+                "user_id": user_id,
+                "status": "active",
+            })
+            if not collab:
+                return None
+            project["role"] = collab.get("role", "read")
+
+        project["token_count"] = await db.APITokens.count_documents(
+            {"project_id": str(project["_id"])}
+        )
+        return project
 
     @staticmethod
     async def update_project(
         project_id: str,
-        owner_id: str,
+        user_id: str,
         update_data: dict,
     ) -> Optional[Dict[str, Any]]:
-        """Update a project's fields."""
+        """
+        Update a project's fields.
+        - Owner can update any field.
+        - Edit-collaborator can update name/description/status only
+          (NOT webhook_base_url).
+        - Read-collaborator cannot update.
+        """
+        update_data = {k: v for k, v in update_data.items() if v is not None}
         update_data["updated_at"] = datetime.now(timezone.utc)
-        # Remove None values
-        clean = {k: v for k, v in update_data.items() if v is not None}
+
+        # Determine caller's role
+        try:
+            project = await db.Projects.find_one({"_id": ObjectId(project_id)})
+        except Exception:
+            return None
+        if not project:
+            return None
+
+        is_owner = project.get("owner_id") == user_id
+        if not is_owner:
+            collab = await db.Collaborators.find_one({
+                "project_id": project_id,
+                "user_id": user_id,
+                "status": "active",
+            })
+            if not collab or collab.get("role") != "edit":
+                logger.warning(
+                    "update_project denied: project=%s user=%s", project_id, user_id,
+                )
+                return None
+            # Editors cannot modify owner-only fields
+            for restricted in ("webhook_base_url", "owner_id"):
+                update_data.pop(restricted, None)
+            if not any(k for k in update_data if k != "updated_at"):
+                # Nothing the editor is allowed to change
+                return None
 
         try:
             result = await db.Projects.find_one_and_update(
-                {"_id": ObjectId(project_id), "owner_id": owner_id},
-                {"$set": clean},
+                {"_id": ObjectId(project_id)},
+                {"$set": update_data},
                 return_document=True,
             )
             if result:
@@ -139,9 +222,10 @@ class ProjectService:
                 "owner_id": owner_id,
             })
             if result.deleted_count > 0:
-                # Cascade: remove all tokens for this project
+                # Cascade: remove all tokens and collaborators for this project
                 await db.APITokens.delete_many({"project_id": project_id})
-                logger.info("Project deleted (cascaded tokens): %s", project_id, extra={"project_id": project_id})
+                await db.Collaborators.delete_many({"project_id": project_id})
+                logger.info("Project deleted (cascaded tokens+collaborators): %s", project_id, extra={"project_id": project_id})
                 return True
             return False
         except Exception:
@@ -221,8 +305,14 @@ class ProjectService:
             (token_document, plain_text_token)
             The plain_text_token is returned ONLY at creation time.
         """
-        # Verify project ownership
-        project = await cls.get_project(project_id, owner_id)
+        # Verify project ownership (tokens are owner-only)
+        try:
+            project = await db.Projects.find_one({
+                "_id": ObjectId(project_id),
+                "owner_id": owner_id,
+            })
+        except Exception:
+            project = None
         if not project:
             raise ValueError("Project not found")
 

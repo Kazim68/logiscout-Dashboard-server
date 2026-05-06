@@ -93,6 +93,8 @@ PENDING_SIGNUPS_COLLECTION = "pending_signups"
 PROJECTS_COLLECTION = "projects"
 API_TOKENS_COLLECTION = "api_tokens"
 CHATS_COLLECTION = "chats"
+PASSWORD_RESETS_COLLECTION = "password_resets"
+COLLABORATORS_COLLECTION = "collaborators"
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +111,8 @@ PendingSignups = None
 Projects = None
 APITokens = None
 Chats = None
+PasswordResets = None
+Collaborators = None
 
 
 def init_collections() -> None:
@@ -116,7 +120,7 @@ def init_collections() -> None:
     Resolve collection references from the connected database.
     Must be called once AFTER Database.connect().
     """
-    global Users, PendingSignups, Projects, APITokens, Chats
+    global Users, PendingSignups, Projects, APITokens, Chats, PasswordResets, Collaborators
 
     db = Database.get_database()
     Users = db[USERS_COLLECTION]
@@ -124,8 +128,11 @@ def init_collections() -> None:
     Projects = db[PROJECTS_COLLECTION]
     APITokens = db[API_TOKENS_COLLECTION]
     Chats = db[CHATS_COLLECTION]
+    PasswordResets = db[PASSWORD_RESETS_COLLECTION]
+    Collaborators = db[COLLABORATORS_COLLECTION]
 
     logger.info("Collection references initialized: %s",
                 [USERS_COLLECTION, PENDING_SIGNUPS_COLLECTION,
                  PROJECTS_COLLECTION, API_TOKENS_COLLECTION,
-                 CHATS_COLLECTION])
+                 CHATS_COLLECTION,
+                 PASSWORD_RESETS_COLLECTION, COLLABORATORS_COLLECTION])

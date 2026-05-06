@@ -11,8 +11,12 @@ from app.schemas.project_schema import (
     ProjectCreateRequest,
     ProjectUpdateRequest,
     TokenCreateRequest,
+    CollaboratorInviteRequest,
+    CollaboratorUpdateRequest,
+    CollaboratorAcceptRequest,
 )
 from app.services.project_service import project_service
+from app.services.collaborator_service import collaborator_service
 from app.models.project_model import project_helper, token_helper
 from app.utils.response_handler import create_response
 from app.core.logging_config import get_logger
@@ -22,6 +26,58 @@ logger = get_logger(__name__)
 
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
+
+
+# ============================================
+# Invitations addressed to the current user
+# Registered BEFORE /{project_id} so the literal "invitations" segment
+# isn't shadowed by the dynamic project-id route.
+# ============================================
+
+
+@router.get(
+    "/invitations",
+    summary="List pending project invitations for the authenticated user",
+)
+async def list_my_invitations(current_user: dict = Depends(get_current_user)):
+    invites = await collaborator_service.list_my_invitations(
+        user_id=current_user["id"],
+    )
+    return create_response(
+        success=True,
+        message="Invitations retrieved",
+        data=invites,
+    )
+
+
+@router.post(
+    "/invitations/{invitation_id}/respond",
+    summary="Accept or decline a project invitation",
+)
+async def respond_to_invitation(
+    invitation_id: str,
+    action: str,
+    current_user: dict = Depends(get_current_user),
+):
+    if action not in ("accept", "decline"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=create_response(
+                success=False,
+                message="action must be 'accept' or 'decline'",
+            ),
+        )
+    success, message = await collaborator_service.respond_to_invitation(
+        invitation_id=invitation_id,
+        user_id=current_user["id"],
+        action=action,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=create_response(success=False, message=message),
+        )
+    return create_response(success=True, message=message)
 
 
 # ============================================
@@ -91,7 +147,7 @@ async def get_webhook_url(
     current_user: dict = Depends(get_current_user),
 ):
     project = await project_service.get_project(project_id, current_user["id"])
-    if not project:
+    if not project or project.get("role") != "owner":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=create_response(success=False, message="Project not found"),
@@ -210,9 +266,9 @@ async def list_tokens(
     project_id: str,
     current_user: dict = Depends(get_current_user),
 ):
-    # Verify project ownership
+    # Verify project ownership (tokens are owner-only)
     project = await project_service.get_project(project_id, current_user["id"])
-    if not project:
+    if not project or project.get("role") != "owner":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=create_response(success=False, message="Project not found"),
@@ -257,3 +313,133 @@ async def delete_token(
             detail=create_response(success=False, message="Token not found"),
         )
     return create_response(success=True, message="Token revoked")
+
+
+# ============================================
+# Collaborator Management (owner-only)
+# ============================================
+
+
+@router.post(
+    "/{project_id}/collaborators",
+    status_code=status.HTTP_201_CREATED,
+    summary="Invite an existing LogiScout user as a project collaborator",
+)
+async def invite_collaborator(
+    project_id: str,
+    request: CollaboratorInviteRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    success, message, data = await collaborator_service.invite_collaborator(
+        project_id=project_id,
+        owner_id=current_user["id"],
+        owner_name=current_user.get("name", ""),
+        email=request.email,
+        role=request.role,
+    )
+    if not success:
+        # Map common failures to appropriate HTTP codes
+        msg_lower = message.lower()
+        if "not found" in msg_lower or "no logiscout account" in msg_lower:
+            code = status.HTTP_404_NOT_FOUND
+        elif "already" in msg_lower:
+            code = status.HTTP_409_CONFLICT
+        elif "yourself" in msg_lower or "owner" in msg_lower:
+            code = status.HTTP_409_CONFLICT
+        else:
+            code = status.HTTP_400_BAD_REQUEST
+        raise HTTPException(
+            status_code=code,
+            detail=create_response(success=False, message=message),
+        )
+    return create_response(success=True, message=message, data=data)
+
+
+@router.get(
+    "/{project_id}/collaborators",
+    summary="List collaborators for a project (owner-only)",
+)
+async def list_collaborators(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    collaborators = await collaborator_service.list_collaborators(
+        project_id=project_id,
+        owner_id=current_user["id"],
+    )
+    if collaborators is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=create_response(success=False, message="Project not found"),
+        )
+    return create_response(
+        success=True,
+        message="Collaborators retrieved",
+        data=collaborators,
+    )
+
+
+@router.patch(
+    "/{project_id}/collaborators/{collaborator_id}",
+    summary="Update a collaborator's role (owner-only)",
+)
+async def update_collaborator_role(
+    project_id: str,
+    collaborator_id: str,
+    request: CollaboratorUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    success, message = await collaborator_service.update_role(
+        project_id=project_id,
+        collaborator_id=collaborator_id,
+        owner_id=current_user["id"],
+        new_role=request.role,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=create_response(success=False, message=message),
+        )
+    return create_response(success=True, message=message)
+
+
+@router.delete(
+    "/{project_id}/collaborators/{collaborator_id}",
+    summary="Remove a collaborator from a project (owner-only)",
+)
+async def remove_collaborator(
+    project_id: str,
+    collaborator_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    success, message = await collaborator_service.remove_collaborator(
+        project_id=project_id,
+        collaborator_id=collaborator_id,
+        owner_id=current_user["id"],
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=create_response(success=False, message=message),
+        )
+    return create_response(success=True, message=message)
+
+
+@router.post(
+    "/accept-invite",
+    summary="Accept a pending collaborator invitation",
+)
+async def accept_invite(
+    request: CollaboratorAcceptRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    success, message = await collaborator_service.accept_invite(
+        invite_token=request.invite_token,
+        user_id=current_user["id"],
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=create_response(success=False, message=message),
+        )
+    return create_response(success=True, message=message)

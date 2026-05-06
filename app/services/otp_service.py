@@ -98,8 +98,11 @@ class OTPService:
             logger.info("OTP verify — no pending signup for: %s", email)
             return (False, "No pending verification for this email. Please sign up again.", None, None)
 
-        # Check expiry
-        if pending.get("expires_at") and pending["expires_at"] < datetime.now(timezone.utc):
+        # Check expiry (MongoDB may return naive datetimes — treat them as UTC)
+        expires_at = pending.get("expires_at")
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at and expires_at < datetime.now(timezone.utc):
             await db.PendingSignups.delete_one({"_id": pending["_id"]})
             logger.info("OTP expired for: %s", email)
             return (False, "Verification code has expired. Please sign up again.", None, None)

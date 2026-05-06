@@ -265,3 +265,45 @@ class OnboardingRequest(BaseModel):
     project_name: Optional[str] = Field(None, max_length=100, description="First project name")
     project_description: Optional[str] = Field(None, max_length=500, description="First project description")
     invited_emails: Optional[list] = Field(default_factory=list, description="Team member emails to invite")
+
+
+# ============================================
+# Password Reset Schemas
+# ============================================
+
+class ForgotPasswordRequest(BaseModel):
+    """Schema for initiating a password reset."""
+    email: EmailStr = Field(..., description="Email address to send reset code to")
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v):
+        return v.lower()
+
+
+class ResetPasswordRequest(BaseModel):
+    """Schema for completing a password reset."""
+    resetToken: str = Field(..., min_length=6, max_length=6, description="6-digit reset code")
+    newPassword: str = Field(..., min_length=6, max_length=100, description="New password")
+    confirmPassword: str = Field(..., min_length=6, max_length=100, description="Password confirmation")
+
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, info):
+        if info.data.get("newPassword") and v != info.data["newPassword"]:
+            raise ValueError("Passwords do not match")
+        return v
+
+
+class UpdatePasswordRequest(BaseModel):
+    """Schema for updating password from the dashboard (requires current password)."""
+    currentPassword: str = Field(..., min_length=6, description="Current password for verification")
+    newPassword: str = Field(..., min_length=6, max_length=100, description="New password")
+    confirmPassword: str = Field(..., min_length=6, max_length=100, description="New password confirmation")
+
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, v, info):
+        if info.data.get("newPassword") and v != info.data["newPassword"]:
+            raise ValueError("Passwords do not match")
+        return v

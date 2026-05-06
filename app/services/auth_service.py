@@ -3,10 +3,13 @@ Authentication Service
 Handles user registration, login, and authentication logic.
 """
 
-from datetime import datetime, timezone
+import random
+import string
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, Tuple
 
 from app.core import database as db
+from app.core.config import settings
 from app.core.security import (
     hash_password,
     verify_password,
@@ -16,6 +19,7 @@ from app.core.security import (
 from app.core.logging_config import get_logger
 from app.models.user_model import user_helper
 from app.schemas.user_schema import UserSignUpRequest, UserSignInRequest
+from app.utils.email_sender import send_reset_code_email
 
 logger = get_logger(__name__)
 
@@ -253,6 +257,119 @@ class AuthService:
         user_data = user_helper(user)
         
         return (user_data, token)
+
+    # ------------------------------------------------------------------
+    # Password Reset
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _generate_reset_code() -> str:
+        return "".join(random.choices(string.digits, k=6))
+
+    @staticmethod
+    async def _ensure_reset_ttl_index():
+        try:
+            await db.PasswordResets.create_index("expires_at", expireAfterSeconds=0)
+        except Exception:
+            await db.PasswordResets.drop_index("expires_at_1")
+            await db.PasswordResets.create_index("expires_at", expireAfterSeconds=0)
+
+    @staticmethod
+    async def create_password_reset(email: str) -> Tuple[bool, str]:
+        await AuthService._ensure_reset_ttl_index()
+
+        user = await AuthService.get_user_by_email(email)
+        if not user:
+            return (True, "If that email is registered, a reset code has been sent")
+
+        if user.get("provider") != "email":
+            return (True, "If that email is registered, a reset code has been sent")
+
+        code = AuthService._generate_reset_code()
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.RESET_CODE_EXPIRE_MINUTES)
+
+        await db.PasswordResets.update_one(
+            {"email": email.lower()},
+            {
+                "$set": {
+                    "email": email.lower(),
+                    "code": code,
+                    "expires_at": expires_at,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            },
+            upsert=True,
+        )
+
+        send_reset_code_email(
+            to_email=email,
+            code=code,
+            user_name=user.get("name", "there"),
+        )
+        logger.info("Password reset code sent to %s", email)
+        return (True, "If that email is registered, a reset code has been sent")
+
+    @staticmethod
+    async def reset_password(reset_token: str, new_password: str) -> Tuple[bool, str, int]:
+        doc = await db.PasswordResets.find_one({"code": reset_token})
+
+        if not doc:
+            return (False, "Invalid or expired token", 401)
+
+        expires_at = doc.get("expires_at")
+        if expires_at:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at < datetime.now(timezone.utc):
+                await db.PasswordResets.delete_one({"_id": doc["_id"]})
+                return (False, "Invalid or expired token", 401)
+
+        user = await db.Users.find_one({"email": doc["email"]})
+        if not user:
+            await db.PasswordResets.delete_one({"_id": doc["_id"]})
+            return (False, "Invalid or expired token", 401)
+
+        await db.Users.update_one(
+            {"_id": user["_id"]},
+            {"$set": {"password": hash_password(new_password)}},
+        )
+
+        await db.PasswordResets.delete_one({"_id": doc["_id"]})
+
+        logger.info("Password reset completed for %s", doc["email"])
+        return (True, "Password updated successfully", 200)
+
+    # ------------------------------------------------------------------
+    # Update Password (authenticated)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def update_password(
+        user_id: str, current_password: str, new_password: str
+    ) -> Tuple[bool, str]:
+        from bson import ObjectId
+
+        user = await AuthService.get_user_by_id(user_id)
+        if not user:
+            return (False, "User not found")
+
+        if user.get("provider") != "email":
+            return (False, "Password change is only available for email accounts")
+
+        if not user.get("password"):
+            return (False, "No password set for this account")
+
+        if not verify_password(current_password, user["password"]):
+            logger.warning("Incorrect current password for user %s", user_id)
+            return (False, "Current password is incorrect")
+
+        await db.Users.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"password": hash_password(new_password)}},
+        )
+
+        logger.info("Password updated for user %s", user_id)
+        return (True, "Password updated successfully")
 
 
 # Export singleton instance

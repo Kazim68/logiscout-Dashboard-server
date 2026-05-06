@@ -96,6 +96,7 @@ def project_helper(project: dict) -> dict:
         "updated_at": project.get("updated_at", datetime.now(timezone.utc)).isoformat(),
         "webhook_base_url": project.get("webhook_base_url", None),
         "vague_context": project.get("vague_context") or "",
+        "role": project.get("role", "owner"),
     }
 
 

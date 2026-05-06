@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # OTP Configuration
     OTP_LENGTH: int = 6
     OTP_EXPIRE_MINUTES: int = 10
+
+    # Password Reset Configuration
+    RESET_CODE_EXPIRE_MINUTES: int = 15
     
     class Config:
         env_file = ".env"

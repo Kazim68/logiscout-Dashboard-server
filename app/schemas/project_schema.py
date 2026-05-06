@@ -4,7 +4,7 @@ Pydantic schemas for request/response validation.
 """
 
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 # ============================================
@@ -97,3 +97,41 @@ class TokenCreatedResponse(BaseModel):
     token_masked: str
     is_active: bool = True
     created_at: str
+
+
+# ============================================
+# Collaborator Schemas
+# ============================================
+
+class CollaboratorInviteRequest(BaseModel):
+    """Schema for inviting a collaborator by email."""
+    email: EmailStr = Field(..., description="Email of an existing LogiScout user")
+    role: str = Field("read", pattern="^(read|edit)$", description="Access level: read or edit")
+
+    class Config:
+        json_schema_extra = {
+            "example": {"email": "teammate@example.com", "role": "edit"}
+        }
+
+
+class CollaboratorUpdateRequest(BaseModel):
+    """Schema for changing a collaborator's role."""
+    role: str = Field(..., pattern="^(read|edit)$", description="New access level: read or edit")
+
+
+class CollaboratorAcceptRequest(BaseModel):
+    """Schema for accepting a collaborator invite."""
+    invite_token: str = Field(..., min_length=10, description="Unique invite token from email link")
+
+
+class CollaboratorResponse(BaseModel):
+    """Schema for a collaborator in API responses."""
+    id: str
+    project_id: str
+    user_id: str
+    email: str
+    name: str
+    role: str        # "read" | "edit"
+    status: str      # "pending" | "active"
+    created_at: str
+    accepted_at: Optional[str] = None
