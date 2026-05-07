@@ -252,7 +252,7 @@ python -m app.main
 ## Security
 
 - Passwords are hashed using bcrypt
-- JWT tokens expire after 30 minutes (configurable)
+- JWT tokens expire after 1 day (configurable)
 - CORS is configured for frontend integration
 - OAuth state parameter for CSRF protection
 - Sensitive data excluded from responses
