@@ -192,13 +192,22 @@ class ProjectService:
     @staticmethod
     async def update_vague_context(
         project_id: str,
-        owner_id: str,
+        user_id: Optional[str],
         vague_context: str,
     ) -> bool:
         """Persist a refreshed vague_context summary on the project."""
         try:
+            if user_id:
+                project = await ProjectService.get_project(project_id, user_id)
+                if not project:
+                    logger.warning(
+                        "update_vague_context denied: project=%s user=%s",
+                        project_id,
+                        user_id,
+                    )
+                    return False
             result = await db.Projects.update_one(
-                {"_id": ObjectId(project_id), "owner_id": owner_id},
+                {"_id": ObjectId(project_id)},
                 {
                     "$set": {
                         "vague_context": vague_context,

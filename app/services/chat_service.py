@@ -31,8 +31,8 @@ class ChatService:
 
         try:
             await db.Chats.create_index(
-                [("owner_id", 1), ("project_id", 1), ("updated_at", -1)],
-                name="owner_project_updated_at_idx",
+                [("project_id", 1), ("updated_at", -1)],
+                name="project_updated_at_idx",
             )
             await db.Chats.create_index(
                 [("project_id", 1), ("created_at", -1)],
@@ -86,12 +86,16 @@ class ChatService:
         role: str,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
+        sender: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        payload = dict(metadata or {})
+        if sender:
+            payload.setdefault("sender", sender)
         return {
             "role": role.strip(),
             "content": content.strip(),
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "metadata": metadata or {},
+            "metadata": payload,
         }
 
     @staticmethod
@@ -147,7 +151,6 @@ class ChatService:
         self,
         project_id: str,
         chat_id: str,
-        owner_id: str,
         max_pairs: Optional[int] = None,
         drop_incomplete_trailing_turns: bool = False,
     ) -> List[Dict[str, str]]:
@@ -156,7 +159,7 @@ class ChatService:
 
         This is the only shape that should be sent to the LLM.
         """
-        chat = await self.get_chat(project_id, chat_id, owner_id)
+        chat = await self.get_chat(project_id, chat_id)
         if not chat:
             return []
 
@@ -175,7 +178,8 @@ class ChatService:
     async def create_chat(
         self,
         project_id: str,
-        owner_id: str,
+        created_by: Optional[str],
+        created_by_name: Optional[str],
         title: str,
         messages: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
@@ -190,7 +194,9 @@ class ChatService:
 
         doc = {
             "project_id": project_id,
-            "owner_id": owner_id,
+            "owner_id": created_by,
+            "created_by": created_by,
+            "created_by_name": created_by_name,
             "title": title.strip(),
             "encrypted_payload": chat_encryption.encrypt_payload(
                 {"messages": normalized_messages}
@@ -212,20 +218,23 @@ class ChatService:
     async def stage_user_prompt(
         self,
         project_id: str,
-        owner_id: str,
         user_prompt: str,
         vague_context: str = "",
         chat_id: Optional[str] = None,
+        sender: Optional[Dict[str, Any]] = None,
+        created_by: Optional[str] = None,
+        created_by_name: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Create or update a chat with the incoming user prompt before streaming."""
         prompt_message = self._build_message(
             role="user",
             content=user_prompt,
             metadata={"vague_context": vague_context} if vague_context else {},
+            sender=sender,
         )
 
         if chat_id:
-            existing_chat = await self.get_chat(project_id, chat_id, owner_id)
+            existing_chat = await self.get_chat(project_id, chat_id)
             if not existing_chat:
                 return None
 
@@ -233,13 +242,13 @@ class ChatService:
             return await self.replace_chat_messages(
                 project_id=project_id,
                 chat_id=chat_id,
-                owner_id=owner_id,
                 messages=updated_messages,
             )
 
         return await self.create_chat(
             project_id=project_id,
-            owner_id=owner_id,
+            created_by=created_by,
+            created_by_name=created_by_name,
             title=self._derive_title(user_prompt),
             messages=[prompt_message],
         )
@@ -247,14 +256,13 @@ class ChatService:
     async def finalize_assistant_response(
         self,
         project_id: str,
-        owner_id: str,
         chat_id: str,
         assistant_response: str,
         llm_payload: Optional[Dict[str, Any]] = None,
         simulated: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Append the assistant response after streaming completes."""
-        existing_chat = await self.get_chat(project_id, chat_id, owner_id)
+        existing_chat = await self.get_chat(project_id, chat_id)
         if not existing_chat:
             return None
 
@@ -266,12 +274,15 @@ class ChatService:
                     "simulated": simulated,
                     "llm_payload": llm_payload or {},
                 },
+                sender={
+                    "type": "assistant",
+                    "name": "LogiScout",
+                },
             )
         ]
         return await self.replace_chat_messages(
             project_id=project_id,
             chat_id=chat_id,
-            owner_id=owner_id,
             messages=updated_messages,
         )
 
@@ -279,7 +290,6 @@ class ChatService:
         self,
         project_id: str,
         chat_id: str,
-        owner_id: str,
         messages: List[Dict[str, Any]],
         title: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
@@ -305,7 +315,6 @@ class ChatService:
                 {
                     "_id": ObjectId(chat_id),
                     "project_id": project_id,
-                    "owner_id": owner_id,
                 },
                 {"$set": update_data},
                 return_document=ReturnDocument.AFTER,
@@ -319,7 +328,6 @@ class ChatService:
         self,
         project_id: str,
         chat_id: str,
-        owner_id: str,
         summary: str,
         summarized_message_count: int,
     ) -> bool:
@@ -334,7 +342,6 @@ class ChatService:
                 {
                     "_id": ObjectId(chat_id),
                     "project_id": project_id,
-                    "owner_id": owner_id,
                 },
                 {
                     "$set": {
@@ -361,14 +368,15 @@ class ChatService:
     async def list_project_chats(
         self,
         project_id: str,
-        owner_id: str,
     ) -> List[Dict[str, Any]]:
         """List all chat summaries for a project."""
         await self.ensure_indexes()
         cursor = db.Chats.find(
-            {"project_id": project_id, "owner_id": owner_id},
+            {"project_id": project_id},
             {
                 "project_id": 1,
+                "created_by": 1,
+                "created_by_name": 1,
                 "title": 1,
                 "message_count": 1,
                 "chat_summary": 1,
@@ -383,7 +391,6 @@ class ChatService:
     async def get_recent_chat_context(
         self,
         project_id: str,
-        owner_id: str,
         active_chat_id: Optional[str] = None,
         max_pairs: int = 4,
     ) -> List[Dict[str, Any]]:
@@ -402,7 +409,6 @@ class ChatService:
                 await self.get_chat_context(
                     project_id=project_id,
                     chat_id=active_chat_id,
-                    owner_id=owner_id,
                     max_pairs=max_pairs,
                     drop_incomplete_trailing_turns=True,
                 )
@@ -411,7 +417,7 @@ class ChatService:
         if len(context_messages) >= max_messages:
             return context_messages[-max_messages:]
 
-        chat_docs = await self.list_project_chats(project_id, owner_id)
+        chat_docs = await self.list_project_chats(project_id)
         for chat_doc in chat_docs:
             chat_id = str(chat_doc["_id"])
             if active_chat_id and chat_id == active_chat_id:
@@ -420,7 +426,6 @@ class ChatService:
             fallback_messages = await self.get_chat_context(
                 project_id=project_id,
                 chat_id=chat_id,
-                owner_id=owner_id,
                 max_pairs=max_pairs,
                 drop_incomplete_trailing_turns=True,
             )
@@ -439,7 +444,6 @@ class ChatService:
         self,
         project_id: str,
         chat_id: str,
-        owner_id: str,
     ) -> Optional[Dict[str, Any]]:
         """Load and decrypt a full chat."""
         try:
@@ -447,7 +451,6 @@ class ChatService:
                 {
                     "_id": ObjectId(chat_id),
                     "project_id": project_id,
-                    "owner_id": owner_id,
                 }
             )
         except Exception:

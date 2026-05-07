@@ -33,7 +33,9 @@ class ChatModel(BaseModel):
 
     id: Optional[str] = Field(default=None, alias="_id")
     project_id: str
-    owner_id: str
+    owner_id: Optional[str] = None
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
     title: str
     encrypted_payload: str
     message_count: int = 0
@@ -49,7 +51,8 @@ class ChatModel(BaseModel):
         json_schema_extra = {
             "example": {
                 "project_id": "680e3eb793b2f0d6032f45ab",
-                "owner_id": "680e3e8f93b2f0d6032f45aa",
+                "created_by": "680e3e8f93b2f0d6032f45aa",
+                "created_by_name": "Ada Lovelace",
                 "title": "Root cause analysis",
                 "encrypted_payload": "<fernet-token>",
                 "message_count": 8,
@@ -63,6 +66,8 @@ def chat_summary_helper(chat: dict) -> dict:
     return {
         "id": str(chat["_id"]),
         "project_id": chat.get("project_id", ""),
+        "created_by": chat.get("created_by") or chat.get("owner_id"),
+        "created_by_name": chat.get("created_by_name"),
         "title": chat.get("title", ""),
         "message_count": chat.get("message_count", 0),
         "chat_summary": chat.get("chat_summary") or "",

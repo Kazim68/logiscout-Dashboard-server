@@ -47,6 +47,8 @@ class ChatSummaryResponse(BaseModel):
 
     id: str
     project_id: str
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
     title: str
     message_count: int
     created_at: str

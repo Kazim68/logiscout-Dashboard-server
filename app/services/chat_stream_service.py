@@ -94,12 +94,20 @@ class ChatStreamService:
 
         vague_context = project.get("vague_context") or ""
 
+        sender = {
+            "type": "user",
+            "id": current_user.get("id"),
+            "name": current_user.get("name"),
+            "email": current_user.get("email"),
+        }
         staged_chat = await chat_service.stage_user_prompt(
             project_id=request.project_id,
-            owner_id=current_user["id"],
             user_prompt=request.user_prompt,
             vague_context=vague_context,
             chat_id=request.chat_id,
+            sender=sender,
+            created_by=current_user.get("id"),
+            created_by_name=current_user.get("name"),
         )
         if not staged_chat:
             yield {
@@ -112,7 +120,6 @@ class ChatStreamService:
 
         chat_context = await chat_service.get_recent_chat_context(
             project_id=request.project_id,
-            owner_id=current_user["id"],
             active_chat_id=str(staged_chat["_id"]),
         )
 
@@ -208,7 +215,6 @@ class ChatStreamService:
 
         updated_chat = await chat_service.finalize_assistant_response(
             project_id=request.project_id,
-            owner_id=current_user["id"],
             chat_id=str(staged_chat["_id"]),
             assistant_response=full_response,
             llm_payload={
@@ -220,7 +226,6 @@ class ChatStreamService:
 
         self._maybe_schedule_chat_summary(
             project_id=request.project_id,
-            owner_id=current_user["id"],
             updated_chat=updated_chat,
         )
 
@@ -238,7 +243,6 @@ class ChatStreamService:
     def _maybe_schedule_chat_summary(
         self,
         project_id: str,
-        owner_id: str,
         updated_chat: Optional[Dict[str, Any]],
     ) -> None:
         """
@@ -279,7 +283,6 @@ class ChatStreamService:
             asyncio.create_task(
                 self.refresh_chat_summary(
                     project_id=project_id,
-                    owner_id=owner_id,
                     chat_id=chat_id,
                 )
             )
@@ -292,7 +295,6 @@ class ChatStreamService:
     async def refresh_chat_summary(
         self,
         project_id: str,
-        owner_id: str,
         chat_id: str,
     ) -> None:
         """
@@ -309,7 +311,7 @@ class ChatStreamService:
             chat_id,
         )
         try:
-            chat = await chat_service.get_chat(project_id, chat_id, owner_id)
+            chat = await chat_service.get_chat(project_id, chat_id)
             if not chat:
                 logger.warning(
                     "chat_summary refresh skipped: chat missing (chat=%s)",
@@ -378,7 +380,6 @@ class ChatStreamService:
             persisted = await chat_service.update_chat_summary(
                 project_id=project_id,
                 chat_id=chat_id,
-                owner_id=owner_id,
                 summary=new_summary,
                 summarized_message_count=len(all_messages),
             )
@@ -406,7 +407,7 @@ class ChatStreamService:
     async def summarize_and_update_vague_context(
         self,
         project_id: str,
-        owner_id: str,
+        actor_id: str,
         chat_id: str,
     ) -> None:
         """
@@ -422,7 +423,7 @@ class ChatStreamService:
             chat_id,
         )
         try:
-            chat = await chat_service.get_chat(project_id, chat_id, owner_id)
+            chat = await chat_service.get_chat(project_id, chat_id)
             if not chat:
                 logger.warning(
                     "vague_context skipped: chat missing (project=%s, chat=%s)",
@@ -445,7 +446,7 @@ class ChatStreamService:
                 )
                 return
 
-            project = await project_service.get_project(project_id, owner_id)
+            project = await project_service.get_project(project_id, actor_id)
             if not project:
                 logger.warning(
                     "vague_context skipped: project missing (project=%s)",
@@ -496,7 +497,7 @@ class ChatStreamService:
 
             persisted = await project_service.update_vague_context(
                 project_id=project_id,
-                owner_id=owner_id,
+                user_id=actor_id,
                 vague_context=new_vague_context,
             )
             if not persisted:

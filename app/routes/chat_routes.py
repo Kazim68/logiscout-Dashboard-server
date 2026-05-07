@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.logging_config import get_logger
 from app.dependencies.auth_dependency import get_current_user
-from app.models.chat_model import chat_summary_helper
+from app.models.chat_model import chat_detail_helper, chat_summary_helper
 from app.schemas.chat_schema import ChatStreamRequest
 from app.services.chat_service import chat_service
 from app.services.chat_stream_service import chat_stream_service
@@ -35,7 +35,7 @@ async def list_project_chats(
             detail=create_response(success=False, message="Project not found"),
         )
 
-    chats = await chat_service.list_project_chats(project_id, current_user["id"])
+    chats = await chat_service.list_project_chats(project_id)
     data = {
         "project_id": project_id,
         "project_name": project.get("name", ""),
@@ -60,22 +60,25 @@ async def get_project_chat(
             detail=create_response(success=False, message="Project not found"),
         )
 
-    chat = await chat_service.get_chat(project_id, chat_id, current_user["id"])
+    chat = await chat_service.get_chat(project_id, chat_id)
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=create_response(success=False, message="Chat not found"),
         )
 
+    messages = chat.get("messages", [])
     chat_context = await chat_service.get_chat_context(
         project_id=project_id,
         chat_id=chat_id,
-        owner_id=current_user["id"],
     )
     return create_response(
         success=True,
         message="Chat context retrieved",
-        data={"chat_context": chat_context},
+        data={
+            "chat": chat_detail_helper(chat, messages),
+            "chat_context": chat_context,
+        },
     )
 
 
@@ -96,7 +99,7 @@ async def close_chat(
             detail=create_response(success=False, message="Project not found"),
         )
 
-    chat = await chat_service.get_chat(project_id, chat_id, current_user["id"])
+    chat = await chat_service.get_chat(project_id, chat_id)
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -113,7 +116,7 @@ async def close_chat(
     background_tasks.add_task(
         chat_stream_service.summarize_and_update_vague_context,
         project_id=project_id,
-        owner_id=current_user["id"],
+        actor_id=current_user["id"],
         chat_id=chat_id,
     )
     return create_response(
