@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
-from app.core.config import settings, get_allowed_origins
+from app.core.config import settings, get_allowed_origins, get_allowed_origin_regex
 from app.core.database import Database, init_collections
 from app.core.logging_config import setup_logging, get_logger
 from app.services.chat_service import chat_service
@@ -78,9 +78,13 @@ app = FastAPI(
 
 
 # Configure CORS middleware
+# allow_origin_regex catches Vercel preview deployments (per-PR URLs) so
+# previews don't get locked out. allow_credentials=True forbids "*", so we
+# rely on exact-list + regex matching.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
+    allow_origin_regex=get_allowed_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
