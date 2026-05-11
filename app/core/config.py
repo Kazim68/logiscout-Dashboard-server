@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # FRONTEND_URL: primary frontend origin (used for OAuth redirects + CORS).
     # EXTRA_ALLOWED_ORIGINS: optional comma-separated list of additional origins
     # (e.g. local dev, custom domain). Whitespace and trailing slashes are stripped.
-    FRONTEND_URL: str = "https://logiscout-frontend.vercel.app"
+    FRONTEND_URL: str = "https://logiscout.vercel.app"
     EXTRA_ALLOWED_ORIGINS: str = ""
 
     # Ingestion Server
