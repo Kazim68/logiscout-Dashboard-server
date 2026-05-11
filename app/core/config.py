@@ -112,7 +112,7 @@ def get_allowed_origins() -> List[str]:
 
     # Always allow the production frontend, even if FRONTEND_URL was set
     # to something else (e.g. a preview deployment).
-    origins.append("https://logiscout-frontend.vercel.app")
+    origins.append("https://logiscout.vercel.app")
 
     if settings.DEBUG:
         origins.extend([
@@ -133,4 +133,4 @@ def get_allowed_origins() -> List[str]:
 
 def get_allowed_origin_regex() -> str:
     """Match Vercel preview deployments (per-PR URLs) for the frontend project."""
-    return r"^https://logiscout-frontend(-[a-z0-9-]+)?\.vercel\.app$"
+    return r"^https://logiscout(-[a-z0-9-]+)?\.vercel\.app$"
